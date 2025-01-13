@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTableWidget, QTa
 from PyQt5.QtCore import Qt
 from core.allocation_solver import solve_allocation
 
+
 class AlocacaoWindow(QWidget):
     """Tela de alocação."""
     def __init__(self, parent):
@@ -21,6 +22,9 @@ class AlocacaoWindow(QWidget):
 
         # Tabela para exibir o resultado da alocação
         self.result_table = QTableWidget()
+        self.result_table.setSortingEnabled(True)  # Habilita ordenação por colunas
+        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)  # Seleção de linhas completas
+        self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)  # Bloqueia edição
         self.layout.addWidget(self.result_table)
 
         # Botão para voltar ao menu
@@ -29,6 +33,7 @@ class AlocacaoWindow(QWidget):
         self.layout.addWidget(back_button)
 
     def run_allocation(self):
+        """Executa a alocação e exibe os resultados."""
         alunos_data = self.parent.alunos_data
         projetos_data = self.parent.projetos_data
 
@@ -36,17 +41,27 @@ class AlocacaoWindow(QWidget):
             QMessageBox.warning(self, "Erro", "Importe os dados de alunos e projetos antes de continuar!")
             return
 
-        # Executar o solver
-        allocation = solve_allocation(alunos_data, projetos_data)
+        try:
+            # Chama o solver para realizar a alocação
+            allocation_result = solve_allocation(alunos_data, projetos_data)
 
-        # Exibir o resultado na tabela
-        self.result_table.setRowCount(len(allocation))
-        self.result_table.setColumnCount(2)
-        self.result_table.setHorizontalHeaderLabels(["Aluno", "Projetos Alocados"])
+            # Atualiza os dados de alunos com os resultados da alocação
+            self.parent.alunos_info = allocation_result
 
-        for i, (aluno, projetos) in enumerate(allocation):
-            self.result_table.setItem(i, 0, QTableWidgetItem(aluno))
-            self.result_table.setItem(i, 1, QTableWidgetItem(", ".join(projetos)))
+            # Exibe os dados atualizados na tabela
+            self.display_allocation(allocation_result)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Ocorreu um erro durante a alocação: {e}")
+
+    def display_allocation(self, alunos_info):
+        """Exibe os resultados da alocação na tabela."""
+        self.result_table.setRowCount(len(alunos_info))
+        self.result_table.setColumnCount(len(alunos_info.columns))
+        self.result_table.setHorizontalHeaderLabels(alunos_info.columns)
+
+        for i, row in alunos_info.iterrows():
+            for j, value in enumerate(row):
+                self.result_table.setItem(i, j, QTableWidgetItem(str(value)))
 
     def return_to_menu(self):
         """Retorna para o menu principal."""

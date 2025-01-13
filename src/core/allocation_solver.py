@@ -1,99 +1,92 @@
+from pulp import LpProblem, LpVariable, lpSum, LpMinimize, LpStatus, LpMaximize
 import pandas as pd
-from pulp import LpMaximize, LpProblem, LpVariable, lpSum
 
-def preprocess_data(alunos_data, projetos_data):
+def preprocess_data(alunos_df, projetos_df):
     """
-    Pré-processa os dados de alunos e projetos para uso na otimização.
+    Pré-processa os dados a partir de DataFrames já existentes, separando em informações e dados numéricos.
+
+    Args:
+        alunos_df (pd.DataFrame): DataFrame com os dados dos alunos.
+        projetos_df (pd.DataFrame): DataFrame com os dados dos projetos.
+
+    Returns:
+        tuple: Contém alunos_data, projetos_data, alunos_info, projetos_info.
     """
-    # Substituir valores vazios por 0
-    alunos_data = alunos_data.fillna(0)
-    projetos_data = projetos_data.fillna(0)
+    # Separar alunos_info
+    alunos_info = alunos_df.iloc[:, [0, 1, 2, 3, 4, -2, -1]].copy()  # Criar cópia explícita
+    alunos_data = alunos_df.drop(columns=alunos_info.columns).copy()  # Criar cópia explícita
 
-    # Converter coluna "pode_comparecer" em valores numéricos
-    alunos_data["pode_comparecer"] = alunos_data["pode_comparecer"].replace({"Sim": 1, "Não": 0}).fillna(0)
+    # Separar projetos_info
+    projetos_info = projetos_df.iloc[:, [0, 1, 2]].copy()  # Criar cópia explícita
+    projetos_data = projetos_df.drop(columns=projetos_info.columns).copy()  # Criar cópia explícita
 
-    # Pré-alocações (substituir strings vazias por None para facilitar o cálculo)
-    alunos_data["Projeto 1"] = alunos_data["Projeto 1"].replace("", None)
-    alunos_data["Projeto 2"] = alunos_data["Projeto 2"].replace("", None)
+    # Substituir NaN por 0 nos dados de habilidades
+    alunos_data.fillna(0, inplace=True)
+    projetos_data.fillna(0, inplace=True)
 
-    # Remover colunas irrelevantes
-    alunos_habilidades = alunos_data.iloc[:, 4:-2]  # Da 5ª coluna até antes de 'Projeto 1' e 'Projeto 2'
-    projetos_demandas = projetos_data.iloc[:, 2:]  # Da 3ª coluna em diante
+    # Substituir NaN por "Não" na coluna 'pode_comparecer'
+    if "pode_comparecer" in alunos_info.columns:
+        alunos_info.loc[:, "pode_comparecer"] = alunos_info["pode_comparecer"].fillna("Não")
+    if "pode_comparecer" in projetos_info.columns:
+        projetos_info.loc[:, "pode_comparecer"] = projetos_info["pode_comparecer"].fillna("Não")
 
-    return alunos_habilidades, projetos_demandas, alunos_data
+    return alunos_data, projetos_data, alunos_info, projetos_info
 
-def solve_allocation(alunos_data, projetos_data):
+def solve_allocation(alunos_df, projetos_df):
     """
-    Resolve o problema de alocação de alunos para projetos.
+    Resolve a alocação dos alunos aos projetos considerando compatibilidade de skills.
     """
-    # Pré-processar dados
-    alunos_habilidades, projetos_demandas, alunos_data = preprocess_data(alunos_data, projetos_data)
+    # Pré-processar os dados
+    alunos_data, projetos_data, alunos_info, projetos_info = preprocess_data(alunos_df, projetos_df)
 
-    num_alunos = alunos_habilidades.shape[0]
-    num_projetos = projetos_demandas.shape[0]
+    # Obter a lista de projetos e alunos
+    projetos = projetos_info.iloc[:, 1].values  # Coluna "Código do Projeto"
+    alunos = alunos_info.index  # Índices dos alunos
 
-    # Criar o modelo de otimização
-    model = LpProblem("Alocacao_Alunos_Projetos", LpMaximize)
+    # Calcular compatibilidade entre alunos e projetos
+    compatibilidade = alunos_data.values @ projetos_data.values.T
 
-    # Variáveis de decisão
-    x = {(i, j): LpVariable(f"x_{i}_{j}", cat="Binary") for i in range(num_alunos) for j in range(num_projetos)}
+    # Criar problema de otimização
+    model = LpProblem("AlocacaoDeProjetos", LpMaximize)
 
-    # Função objetivo: maximizar compatibilidade e desempate (pode_comparecer)
-    model += lpSum(
-        x[i, j] * (
-            alunos_habilidades.iloc[i].dot(projetos_demandas.iloc[j]) +  # Compatibilidade
-            alunos_data.loc[i, "pode_comparecer"]  # Desempate
-        )
-        for i in range(num_alunos) for j in range(num_projetos)
-    )
+    # Variáveis de decisão: X[i][j] indica se aluno i participa do projeto j
+    x = LpVariable.dicts("x", ((i, j) for i in alunos for j in range(len(projetos))), cat="Binary")
 
-    # Restrição: Respeitar pré-alocações
-    for i in range(num_alunos):
-        # Projetos já alocados
-        pre_allocations = [
-            projetos_data.index[projetos_data.iloc[:, 0] == alunos_data.loc[i, "Projeto 1"]].tolist(),
-            projetos_data.index[projetos_data.iloc[:, 0] == alunos_data.loc[i, "Projeto 2"]].tolist()
-        ]
+    # Função objetivo: Maximizar a compatibilidade total
+    model += lpSum(x[(i, j)] * compatibilidade[i, j] for i in alunos for j in range(len(projetos)))
 
-        # Converter listas de listas em um único conjunto de índices
-        pre_allocated_indices = {j for alloc in pre_allocations for j in alloc if alloc}
+    # Restrições:
+    media_esperada = len(alunos) / len(projetos)
+    margem = 0.5 * media_esperada  # Define uma margem aceitável de variação
 
-        # Se o aluno já está alocado no número total de projetos, nenhuma alocação adicional
-        if len(pre_allocated_indices) >= alunos_data.loc[i, "Projetos Tentados"]:
-            for j in range(num_projetos):
-                model += x[i, j] == 0
-        else:
-            # Se há vagas restantes, limitar a alocação a projetos adicionais
-            remaining_projects = alunos_data.loc[i, "Projetos Tentados"] - len(pre_allocated_indices)
-            model += lpSum(x[i, j] for j in range(num_projetos)) == remaining_projects
+    for i in alunos:
+        # Cada aluno deve participar do número de projetos indicado na coluna "Projetos Tentados"
+        projetos_tentados = alunos_info.loc[i, "Projetos Tentados"]
+        model += lpSum(x[(i, j)] for j in range(len(projetos))) == projetos_tentados
 
-        # Garantir que não seja alocado em projetos já pré-alocados
-        for j in pre_allocated_indices:
-            model += x[i, j] == 0
-
-    # Restringir alocação a projetos compatíveis
-    for i in range(num_alunos):
-        for j in range(num_projetos):
-            if alunos_habilidades.iloc[i].dot(projetos_demandas.iloc[j]) == 0:
-                model += x[i, j] == 0
+    for j in range(len(projetos)):
+        # Garantir que o número de alunos em cada projeto esteja próximo da média esperada
+        alunos_por_projeto = lpSum(x[(i, j)] for i in alunos)
+        model += alunos_por_projeto >= max(1, media_esperada)  # Mínimo
+        model += alunos_por_projeto <= media_esperada + margem          # Máximo
 
     # Resolver o problema
-    model.solve()
+    status = model.solve()
 
-    # Extrair a solução
-    allocation = []
-    for i in range(num_alunos):
-        allocated_projects = []
-        # Adicionar pré-alocações diretamente
-        if alunos_data.loc[i, "Projeto 1"]:
-            allocated_projects.append(alunos_data.loc[i, "Projeto 1"])
-        if alunos_data.loc[i, "Projeto 2"]:
-            allocated_projects.append(alunos_data.loc[i, "Projeto 2"])
+    if LpStatus[status] != "Optimal":
+        raise ValueError("Não foi possível encontrar uma solução ótima para a alocação.")
 
-        # Adicionar projetos alocados pelo solver
-        for j in range(num_projetos):
-            if x[i, j].value() == 1:
-                allocated_projects.append(projetos_data.iloc[j, 0])  # Nome do projeto
-        allocation.append((alunos_data.iloc[i, 0], allocated_projects))  # Nome do aluno e projetos alocados
+    # Atualizar alunos_info com os projetos alocados
+    for i in alunos:
+        alocados = [projetos[j] for j in range(len(projetos)) if x[(i, j)].varValue == 1]
+        for k, col in enumerate(["Projeto 1", "Projeto 2"]):
+            if k < len(alocados):  # Evita índice fora do limite
+                alunos_info.at[i, col] = alocados[k]
 
-    return allocation
+    # Debugging: Imprimir a quantidade de alunos alocados por projeto
+    print("\nDEBUG: Quantidade de alunos alocados por projeto:")
+    for j in range(len(projetos)):
+        alunos_no_projeto = sum(x[(i, j)].varValue for i in alunos)
+        print(f"Projeto {projetos[j]}: {alunos_no_projeto} alunos alocados")
+
+    return alunos_info
