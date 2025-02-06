@@ -4,5 +4,4 @@ dist/
 build/
 *.exe
 *.spec
-# Ignorar o ambiente virtual
-projeto-unesp-env/
+venv/

@@ -20,16 +20,6 @@ def preprocess_data(alunos_df, projetos_df):
     projetos_info = projetos_df.iloc[:, [0, 1, 2]].copy()  # Criar cópia explícita
     projetos_data = projetos_df.drop(columns=projetos_info.columns).copy()  # Criar cópia explícita
 
-    # Substituir NaN por 0 nos dados de habilidades
-    alunos_data.fillna(0, inplace=True)
-    projetos_data.fillna(0, inplace=True)
-
-    # Substituir NaN por "Não" na coluna 'pode_comparecer'
-    if "pode_comparecer" in alunos_info.columns:
-        alunos_info.loc[:, "pode_comparecer"] = alunos_info["pode_comparecer"].fillna("Não")
-    if "pode_comparecer" in projetos_info.columns:
-        projetos_info.loc[:, "pode_comparecer"] = projetos_info["pode_comparecer"].fillna("Não")
-
     return alunos_data, projetos_data, alunos_info, projetos_info
 
 def solve_allocation(alunos_df, projetos_df):
